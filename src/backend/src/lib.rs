@@ -25,17 +25,17 @@ async fn chat(messages: Vec<ChatMessage>) -> String {
 
 #[ic_cdk::update]
 async fn chat_with_llm(message: String) -> String {
-    let mut messages = Vec::new();
-    messages.push(ChatMessage::User { content: message });
+    let messages = vec![ChatMessage::User { content: message }];
 
     let response = ic_llm::chat(Model::Llama3_1_8B)
         .with_messages(messages)
         .send()
         .await;
 
-    response.message.content.unwrap_or_else(|| {
-        "Sorry, I couldn't generate a response. Please try again.".to_string()
-    })
+    response
+        .message
+        .content
+        .unwrap_or_else(|| "Sorry, I couldn't generate a response. Please try again.".to_string())
 }
 
 thread_local! {

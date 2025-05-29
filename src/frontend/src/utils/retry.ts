@@ -16,7 +16,7 @@ export async function withTimeout<T>(
 export async function withRetry<T>(
   operation: () => Promise<T>,
   maxAttempts: number = 2,
-  delayMs: number = 1000
+  delayMs: number = 1000,
 ): Promise<T> {
   let lastError: Error | undefined;
 
@@ -31,9 +31,9 @@ export async function withRetry<T>(
       }
 
       // Wait before retrying
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 
-  throw lastError || new Error('Operation failed');
+  throw lastError || new Error("Operation failed");
 }
