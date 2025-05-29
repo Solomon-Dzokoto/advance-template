@@ -100,6 +100,13 @@
     animation-delay: 4s;
   }
 
+  .hover\:shadow-3xl:hover {
+    --tw-shadow: 0 35px 60px -15px rgba(0, 0, 0, 0.3);
+    box-shadow:
+      var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000),
+      var(--tw-shadow);
+  }
+
   .glass-effect {
     @apply bg-white/10 backdrop-blur-lg;
   }

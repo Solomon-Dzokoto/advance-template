@@ -16,6 +16,7 @@ type Presentation = record {
   created_at : nat64;
   slides : vec Slide;
 };
+type Result = variant { Ok : text; Err : text };
 type Slide = record { id : text; content : text; order : nat32; notes : text };
 type ToolCall = record { id : text; function : FunctionCall };
 type ToolCallArgument = record { value : text; name : text };
@@ -30,5 +31,7 @@ service : {
   increment : () -> (nat64);
   prompt : (text) -> (text);
   set_count : (nat64) -> (nat64);
+  signin : (text, text) -> (Result) query;
+  signup : (text, text) -> (Result);
   update_presentation : (text, vec Slide) -> (opt Presentation);
 }

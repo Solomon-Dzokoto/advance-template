@@ -1,6 +1,10 @@
-export function Logo() {
+interface LogoProps {
+  className?: string;
+}
+
+export function Logo({ className }: LogoProps) {
   return (
-    <div className="flex items-center gap-2 p-2">
+    <div className={`flex items-center gap-2 p-2 ${className || ""}`}>
       <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-r from-blue-500 to-purple-600 shadow-lg">
         <span className="text-xl font-bold text-white">@</span>
       </div>

@@ -1,23 +1,45 @@
 import { useState, useRef, useEffect } from "react";
 import { backend } from "../../../declarations/backend";
-import { Logo } from "../components/Logo";
+import { Logo } from "../components";
 import { TypewriterText } from "../components/TypewriterText";
+import { AuthUser, authService } from "../services/auth";
+import { ChatMessage } from "../../../declarations/backend/backend.did";
+
+interface ChatViewProps {
+  user: AuthUser;
+}
 
 interface Message {
   content: string;
   role: "user" | "assistant";
   timestamp: number;
   id: string;
+  conversationId: string;
+  username?: string;
   isTyping?: boolean;
   error?: boolean;
   retryable?: boolean;
 }
 
-export function ChatView() {
+interface ChatHistory {
+  id: string;
+  title: string;
+  timestamp: number;
+  lastMessage: string;
+  username: string;
+}
+
+const generateUniqueId = () => {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+};
+
+export function ChatView({ user }: ChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [conversationTitle, setConversationTitle] = useState("New Chat");
+  const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
+  const [currentConversationId, setCurrentConversationId] =
+    useState<string>(generateUniqueId());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastMessageRef = useRef<string>("");
 
@@ -29,315 +51,278 @@ export function ChatView() {
     scrollToBottom();
   }, [messages]);
 
-  const generateUniqueId = () => {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  // Load chat history from localStorage on mount
+  useEffect(() => {
+    const savedHistory = localStorage.getItem(`chatHistory_${user.username}`);
+    if (savedHistory) {
+      setChatHistory(JSON.parse(savedHistory));
+    }
+  }, [user.username]);
+
+  // Save chat history to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem(
+      `chatHistory_${user.username}`,
+      JSON.stringify(chatHistory),
+    );
+  }, [chatHistory, user.username]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSendMessage(input);
   };
 
-  const handleNewChat = () => {
-    setMessages([]);
-    setConversationTitle("New Chat");
-    setInput("");
+  const handleRetry = async (message: string) => {
+    if (!message) return;
+    handleSendMessage(message);
   };
 
-  const handleRetry = async (originalMessage: string) => {
-    // Remove the last error message
-    setMessages((prev) => prev.slice(0, -1));
-    // Retry the message
-    await sendMessage(originalMessage);
-  };
+  const handleSendMessage = async (messageText: string) => {
+    if (!messageText.trim()) return;
 
-  const sendMessage = async (messageText: string) => {
-    const tempAssistantMessage: Message = {
-      content: "",
-      role: "assistant",
+    const newMessage: Message = {
+      content: messageText,
+      role: "user",
       timestamp: Date.now(),
       id: generateUniqueId(),
-      isTyping: true,
+      conversationId: currentConversationId,
+      username: user.username,
     };
 
-    setMessages((prev) => [...prev, tempAssistantMessage]);
-    setLoading(true);
+    setMessages((prev) => [...prev, newMessage]);
+    setInput("");
+    lastMessageRef.current = messageText;
 
     try {
-      // Timeout wrapper for the API call (2 minutes)
-      const timeoutDuration = 120000;
-      const timeoutPromise = new Promise<string>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(
-                "Request timed out after 2 minutes. The LLM might be busy, please try again.",
-              ),
-            ),
-          timeoutDuration,
-        ),
-      );
+      setLoading(true);
+      const response = await backend.chat([
+        { user: { content: messageText } },
+      ] as ChatMessage[]);
 
-      // Race between the actual API call and the timeout
-      const response = await Promise.race([
-        backend.chat_with_llm(messageText),
-        timeoutPromise,
-      ]);
+      if (typeof response === "string") {
+        const assistantMessage: Message = {
+          content: response,
+          role: "assistant",
+          timestamp: Date.now(),
+          id: generateUniqueId(),
+          conversationId: currentConversationId,
+          username: user.username,
+        };
 
-      // Error detection patterns
-      const errorPatterns = {
-        timeout: /(timeout|timed out|time limit exceeded)/i,
-        busy: /(busy|overloaded|too many requests)/i,
-        error: /(error|exception|failed)/i,
-      };
+        setMessages((prev) => [...prev, assistantMessage]);
 
-      if (
-        errorPatterns.timeout.test(response) ||
-        errorPatterns.busy.test(response)
-      ) {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tempAssistantMessage.id
-              ? {
-                  ...msg,
-                  content:
-                    "The request timed out. The LLM might be busy processing other requests. Click 'Retry' to try again, or wait a few moments before sending a new message.",
-                  isTyping: false,
-                  error: true,
-                  retryable: true,
-                }
-              : msg,
-          ),
+        // Update chat history
+        const existingHistoryIndex = chatHistory.findIndex(
+          (h) => h.id === currentConversationId,
         );
-      } else if (errorPatterns.error.test(response)) {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tempAssistantMessage.id
-              ? {
-                  ...msg,
-                  content:
-                    "Sorry, there was an error processing your message. This might be temporary - please try again.",
-                  isTyping: false,
-                  error: true,
-                  retryable: true,
-                }
-              : msg,
-          ),
-        );
-      } else {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tempAssistantMessage.id
-              ? { ...msg, content: response, isTyping: false }
-              : msg,
-          ),
-        );
-
-        // Update conversation title if it's the first message
-        if (messages.length === 1) {
-          setConversationTitle(
-            messageText.slice(0, 30) + (messageText.length > 30 ? "..." : ""),
-          );
+        if (existingHistoryIndex === -1) {
+          const newHistory: ChatHistory = {
+            id: currentConversationId,
+            title: messageText.slice(0, 30) + "...",
+            timestamp: Date.now(),
+            lastMessage: response,
+            username: user.username,
+          };
+          setChatHistory((prev) => [newHistory, ...prev]);
+        } else {
+          setChatHistory((prev) => {
+            const updated = [...prev];
+            updated[existingHistoryIndex] = {
+              ...updated[existingHistoryIndex],
+              lastMessage: response,
+              timestamp: Date.now(),
+            };
+            return updated;
+          });
         }
       }
-    } catch (error: any) {
-      const errorMessage =
-        error.message ||
-        error.error_message ||
-        "Sorry, I encountered an error processing your message. Please try again.";
-
-      const isTimeout = /timeout|timed out|time limit exceeded/i.test(
-        errorMessage,
-      );
-
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === tempAssistantMessage.id
-            ? {
-                ...msg,
-                content: isTimeout
-                  ? "The request timed out. The LLM might be busy processing other requests. Click 'Retry' to try again, or wait a few moments before sending a new message."
-                  : errorMessage,
-                isTyping: false,
-                error: true,
-                retryable: true,
-              }
-            : msg,
-        ),
-      );
+    } catch (error) {
+      const errorMessage: Message = {
+        content: `Error: ${error instanceof Error ? error.message : "Failed to get response"}`,
+        role: "assistant",
+        timestamp: Date.now(),
+        id: generateUniqueId(),
+        conversationId: currentConversationId,
+        username: user.username,
+        error: true,
+        retryable: true,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-
-    const messageText = input.trim();
-    lastMessageRef.current = messageText;
-
-    const userMessage: Message = {
-      content: messageText,
-      role: "user",
-      timestamp: Date.now(),
-      id: generateUniqueId(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-
-    await sendMessage(messageText);
+  const startNewChat = () => {
+    const newId = generateUniqueId();
+    setCurrentConversationId(newId);
+    setMessages([]);
   };
 
+  const loadChatHistory = (history: ChatHistory) => {
+    if (history.id === currentConversationId) return;
+
+    setCurrentConversationId(history.id);
+
+    // Load messages for this conversation
+    const savedMessages = localStorage.getItem(
+      `messages_${history.id}_${user.username}`,
+    );
+    if (savedMessages) {
+      setMessages(JSON.parse(savedMessages));
+    } else {
+      setMessages([]);
+    }
+  };
+
+  // Save messages whenever they change
+  useEffect(() => {
+    if (messages.length > 0) {
+      localStorage.setItem(
+        `messages_${currentConversationId}_${user.username}`,
+        JSON.stringify(messages),
+      );
+    }
+  }, [messages, currentConversationId, user.username]);
+
   return (
-    <div className="flex h-screen">
+    <div className="flex min-h-screen">
       {/* Sidebar */}
-      <div className="glass-effect hidden flex-col border-r border-white/20 md:flex md:w-64">
-        <Logo />
-        <div className="p-4">
-          <button
-            onClick={handleNewChat}
-            className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/10 px-4 py-2 text-sm text-white/90 transition-all duration-300 hover:bg-white/20 hover:text-white"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-              />
-            </svg>
-            New Chat
-          </button>
+      <div className="flex w-64 flex-col bg-white/10 text-white backdrop-blur-lg">
+        {/* New chat button */}
+        <button
+          onClick={startNewChat}
+          className="mx-4 mt-4 rounded-lg bg-indigo-600 px-4 py-3 text-sm text-white transition-all duration-300 hover:bg-indigo-700 hover:shadow-lg"
+        >
+          New Chat
+        </button>
+
+        {/* Chat history */}
+        <div className="flex-1 space-y-2 overflow-y-auto px-2 py-4">
+          {chatHistory
+            .filter((h) => h.username === user.username)
+            .map((chat) => (
+              <button
+                key={chat.id}
+                onClick={() => loadChatHistory(chat)}
+                className={`w-full rounded-lg px-4 py-3 text-left text-sm transition-all duration-300 hover:bg-white/10 ${
+                  chat.id === currentConversationId ? "bg-white/15" : ""
+                }`}
+              >
+                <div className="truncate font-medium">{chat.title}</div>
+                <div className="truncate text-xs text-gray-300">
+                  {chat.lastMessage}
+                </div>
+              </button>
+            ))}
         </div>
-        <div className="flex-1 space-y-2 overflow-y-auto p-4">
-          {/* Chat history could go here */}
-          <div className="px-4 py-2 text-sm text-white/80">
-            {conversationTitle}
+
+        {/* Logout button at bottom */}
+        <div className="border-t border-white/10 p-4">
+          <div className="mb-2 flex items-center gap-3 px-4 py-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600">
+              <span className="text-sm font-semibold">
+                {user.username.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div className="flex-1">
+              <div className="truncate text-sm font-medium">
+                {user.username}
+              </div>
+            </div>
           </div>
+          <button
+            onClick={() => authService.logout()}
+            className="w-full rounded-lg border border-white/20 bg-transparent px-4 py-2 text-sm text-white transition-all duration-300 hover:bg-white/10"
+          >
+            Logout
+          </button>
         </div>
       </div>
 
       {/* Main chat area */}
-      <div className="flex flex-1 flex-col">
-        {/* Mobile header */}
-        <div className="glass-effect border-b border-white/20 p-4 md:hidden">
-          <Logo />
-        </div>
-
-        {/* Messages */}
-        <div className="flex-1 space-y-6 overflow-y-auto p-4">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.role === "user" ? "justify-end" : "justify-start"} animate-message-appear`}
-            >
+      <div className="flex flex-1 flex-col bg-gradient-to-br from-indigo-500/5 via-purple-500/5 to-pink-500/5">
+        {/* Chat messages */}
+        <div className="flex-1 space-y-4 overflow-y-auto p-4">
+          {messages.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center text-white">
+              <Logo className="mb-4 rounded-2xl bg-white" />
+              <h1 className="mb-2 text-2xl font-bold">
+                Welcome, {user.username}!
+              </h1>
+              <p>Start a new conversation or select a chat from the history.</p>
+            </div>
+          ) : (
+            messages.map((message) => (
               <div
-                className={`flex max-w-[85%] gap-3 md:max-w-[75%] ${message.role === "assistant" ? "flex-row" : "flex-row-reverse"}`}
+                key={message.id}
+                className={`flex ${
+                  message.role === "user" ? "justify-end" : "justify-start"
+                }`}
               >
-                {/* Avatar */}
                 <div
-                  className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full shadow-lg ${
+                  className={`max-w-3/4 rounded-2xl p-4 shadow-md ${
                     message.role === "user"
-                      ? "animate-pulse-soft bg-gradient-to-br from-indigo-500 to-purple-500"
+                      ? "ml-12 bg-indigo-600 text-white"
                       : message.error
-                        ? "bg-gradient-to-br from-red-500 to-orange-500"
-                        : "animate-pulse-soft bg-gradient-to-br from-pink-500 to-rose-500"
+                        ? "mr-12 bg-red-50 text-red-700"
+                        : "mr-12 bg-white text-gray-800"
                   }`}
                 >
-                  {message.role === "user" ? "U" : "A"}
-                </div>
-
-                {/* Message bubble */}
-                <div
-                  className={`rounded-2xl px-4 py-3 shadow-lg transition-all duration-300 hover:shadow-xl ${
-                    message.role === "user"
-                      ? "bg-gradient-to-br from-indigo-500 to-purple-500 text-white"
-                      : message.error
-                        ? "border border-red-500/20 bg-gradient-to-br from-red-500/10 to-orange-500/10 backdrop-blur-lg"
-                        : "glass-effect text-white/90"
-                  }`}
-                >
-                  {message.isTyping ? (
-                    <TypewriterText content={message.content || ""} />
-                  ) : (
-                    <div className="space-y-2">
-                      <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
-                        {message.content}
-                      </p>
-                      {message.error && message.retryable && (
+                  {message.error ? (
+                    <>
+                      <p>{message.content}</p>
+                      {message.retryable && (
                         <button
+                          className="mt-2 text-sm text-red-600 hover:text-red-800"
                           onClick={() => handleRetry(lastMessageRef.current)}
-                          className="mt-2 flex items-center gap-2 text-sm text-red-400 transition-colors hover:text-red-300"
                         >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            className="h-4 w-4"
-                            viewBox="0 0 20 20"
-                            fill="currentColor"
-                          >
-                            <path
-                              fillRule="evenodd"
-                              d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
-                              clipRule="evenodd"
-                            />
-                          </svg>
                           Retry
                         </button>
                       )}
-                    </div>
+                    </>
+                  ) : message.isTyping ? (
+                    <TypewriterText content={message.content} />
+                  ) : (
+                    message.content
                   )}
                 </div>
               </div>
-            </div>
-          ))}
-          {loading && !messages[messages.length - 1]?.isTyping && (
-            <div className="animate-message-appear flex justify-start">
-              <div className="flex gap-3">
-                <div className="animate-pulse-soft flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-rose-500 text-white">
-                  A
-                </div>
-                <div className="glass-effect flex items-center space-x-2 rounded-2xl bg-white p-2 shadow-lg" />
-              </div>
-            </div>
+            ))
           )}
           <div ref={messagesEndRef} />
         </div>
 
         {/* Input area */}
-        <div className="glass-effect border-t border-white/20 p-4">
-          <form
-            onSubmit={handleSubmit}
-            className="mx-auto flex max-w-4xl gap-4"
-          >
-            <div className="relative flex-1">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Message AI..."
-                className="w-full rounded-xl border border-white/10 bg-white/10 p-4 pr-12 text-white shadow-lg backdrop-blur-lg transition-all duration-300 placeholder:text-white/50 focus:border-white/20 focus:ring-2 focus:ring-white/20"
-                disabled={loading}
-              />
-              <button
-                type="submit"
-                disabled={loading || !input.trim()}
-                className="absolute top-1/2 right-2 -translate-y-1/2 p-2 text-white/80 transition-all duration-300 hover:text-white disabled:text-white/40"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  className="h-6 w-6"
-                >
-                  <path d="M3.478 2.404a.75.75 0 00-.926.941l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.404z" />
-                </svg>
-              </button>
-            </div>
-          </form>
-        </div>
+        <form
+          onSubmit={handleSubmit}
+          className="border-t border-gray-200 bg-white/50 p-4 backdrop-blur-sm"
+        >
+          <div className="mx-auto flex max-w-4xl gap-4">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type your message..."
+              className="flex-1 rounded-xl border border-gray-300 bg-white/80 px-4 py-3 backdrop-blur-sm transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"
+              disabled={loading}
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              className="rounded-xl bg-indigo-600 px-6 py-3 text-white transition-all duration-300 hover:bg-indigo-700 hover:shadow-lg focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:outline-none disabled:opacity-50 disabled:hover:shadow-none"
+            >
+              {loading ? (
+                <div className="flex items-center">
+                  <div className="mr-2 h-5 w-5 animate-spin rounded-full border-t-2 border-white"></div>
+                  Sending...
+                </div>
+              ) : (
+                "Send"
+              )}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
