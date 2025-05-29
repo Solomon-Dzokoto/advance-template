@@ -190,6 +190,7 @@ export function ChatView({ user }: ChatViewProps) {
       {/* Sidebar */}
       <div className="flex w-64 flex-col bg-white/10 text-white backdrop-blur-lg">
         {/* New chat button */}
+        <Logo />
         <button
           onClick={startNewChat}
           className="mx-4 mt-4 rounded-lg bg-indigo-600 px-4 py-3 text-sm text-white transition-all duration-300 hover:bg-indigo-700 hover:shadow-lg"

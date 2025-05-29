@@ -20,11 +20,6 @@ function App() {
     setError(undefined);
   };
 
-  const handleLogout = () => {
-    authService.logout();
-    setUser(null);
-  };
-
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -53,14 +48,6 @@ function App() {
 
           {user ? (
             <>
-              <div className="absolute top-4 right-4 z-10">
-                <button
-                  onClick={handleLogout}
-                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:outline-none"
-                >
-                  Logout
-                </button>
-              </div>
               <ChatView user={user} />
             </>
           ) : (
