@@ -9,13 +9,26 @@ type ChatMessage = variant {
   system : record { content : text };
 };
 type FunctionCall = record { name : text; arguments : vec ToolCallArgument };
+type Presentation = record {
+  id : text;
+  title : text;
+  updated_at : nat64;
+  created_at : nat64;
+  slides : vec Slide;
+};
+type Slide = record { id : text; content : text; order : nat32; notes : text };
 type ToolCall = record { id : text; function : FunctionCall };
 type ToolCallArgument = record { value : text; name : text };
 service : {
   chat : (vec ChatMessage) -> (text);
+  chat_with_llm : (text) -> (text);
+  create_presentation : (text) -> (Presentation);
+  generate_slide_suggestions : (text) -> (vec text);
   get_count : () -> (nat64) query;
+  get_presentation : (text) -> (opt Presentation) query;
   greet : (text) -> (text) query;
   increment : () -> (nat64);
   prompt : (text) -> (text);
   set_count : (nat64) -> (nat64);
+  update_presentation : (text, vec Slide) -> (opt Presentation);
 }
